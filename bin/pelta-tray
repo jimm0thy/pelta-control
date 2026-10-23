@@ -184,12 +184,18 @@ class Window(QWidget):
         self.echo.setChecked(bool(saved.get("echo_cancel")))
         self.update_lighting_widgets()
 
+        self.load_power()
+        self.loading = False
+        self.refresh_status()
+
+    def load_power(self):
+        """Read sleep timer and alert from the headset; disable the box if asleep."""
+        was_loading, self.loading = self.loading, True
         self.power = None
         holder = {}
         err = run(lambda: holder.update(v=ctl.read_settings()))
         if err:
-            self.power_box.setEnabled(False)
-            self.power_box.setTitle("Power (wake the headset to change)")
+            self.set_power_asleep()
         else:
             sleep_min, _, alert, on = holder["v"]
             self.power = (sleep_min, alert, on)
@@ -201,8 +207,12 @@ class Window(QWidget):
             self.alert.setValue(min(max(alert, 5), 50))
             self.alert_on.setChecked(bool(on))
             self.alert.setEnabled(bool(on))
-        self.loading = False
-        self.refresh_status()
+        self.loading = was_loading
+
+    def set_power_asleep(self):
+        self.power = None
+        self.power_box.setEnabled(False)
+        self.power_box.setTitle("Power (wake the headset to change)")
 
     def refresh_status(self):
         s = read_state()
@@ -221,6 +231,12 @@ class Window(QWidget):
         if s.get("charging"):
             parts.append("charging")
         self.status.setText(", ".join(parts) or "unknown")
+
+        # Follow wake/sleep while the window is open.
+        if s.get("awake") and self.power is None and not self.loading:
+            self.load_power()
+        elif s.get("awake") is False and self.power is not None:
+            self.set_power_asleep()
 
     # ---- lighting -----------------------------------------------------------
     def update_lighting_widgets(self):

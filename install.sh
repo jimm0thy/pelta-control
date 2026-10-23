@@ -50,20 +50,42 @@ if [[ -n "${1:-}" ]]; then
 fi
 
 # --- dependencies -----------------------------------------------------------
-missing=()
-command -v python3     >/dev/null || missing+=(python)
-python3 -c 'import PyQt6' 2>/dev/null || missing+=(python-pyqt6)
-command -v notify-send >/dev/null || missing+=(libnotify)
-command -v pactl       >/dev/null || missing+=(libpulse)
+# Needed: Python 3, PyQt6, notify-send and pactl. Package names per manager:
+#                 python3   PyQt6           notify-send      pactl
+pkg_pacman=(      python    python-pyqt6    libnotify        libpulse)
+pkg_apt=(         python3   python3-pyqt6   libnotify-bin    pulseaudio-utils)
+pkg_dnf=(         python3   python3-pyqt6   libnotify        pulseaudio-utils)
+pkg_zypper=(      python3   python3-PyQt6   libnotify-tools  pulseaudio-utils)
 
-if ((${#missing[@]})); then
-    if command -v pacman >/dev/null; then
-        say "Installing missing packages: ${missing[*]}"
-        sudo pacman -S --needed "${missing[@]}"
+need=()
+command -v python3     >/dev/null || need+=(0)
+python3 -c 'import PyQt6' 2>/dev/null || need+=(1)
+command -v notify-send >/dev/null || need+=(2)
+command -v pactl       >/dev/null || need+=(3)
+
+if ((${#need[@]})); then
+    if   command -v pacman >/dev/null; then pm=pacman; install_cmd=(sudo pacman -S --needed)
+    elif command -v apt-get >/dev/null; then pm=apt;   install_cmd=(sudo apt-get install -y)
+    elif command -v dnf    >/dev/null; then pm=dnf;    install_cmd=(sudo dnf install -y)
+    elif command -v zypper >/dev/null; then pm=zypper; install_cmd=(sudo zypper install -y)
     else
-        warn "Missing: ${missing[*]} (Arch package names)."
-        warn "Install the equivalents for your distro: Python 3, PyQt6,"
-        warn "notify-send (libnotify) and pactl, then run this script again."
+        warn "Missing dependencies and no supported package manager found."
+        warn "Install Python 3, PyQt6, notify-send (libnotify) and pactl"
+        warn "(pulseaudio-utils / libpulse), then run this script again."
+        exit 1
+    fi
+    declare -n names="pkg_$pm"
+    pkgs=()
+    for i in "${need[@]}"; do pkgs+=("${names[$i]}"); done
+    say "Installing missing packages with $pm: ${pkgs[*]}"
+    if ! "${install_cmd[@]}" "${pkgs[@]}"; then
+        warn "Package install failed. Package names can differ between releases;"
+        warn "install the equivalents of: ${pkgs[*]} and run this script again."
+        exit 1
+    fi
+    if ! python3 -c 'import PyQt6' 2>/dev/null; then
+        warn "PyQt6 still isn't importable. On older releases without a PyQt6"
+        warn "package, try: pip install --user PyQt6"
         exit 1
     fi
 fi
@@ -124,6 +146,12 @@ if [[ -n "$old" ]]; then
     warn "Found an older system-level service: $old"
     warn "It does the same job as pelta-wake.service. Disable it with:"
     warn "  sudo systemctl disable --now $old"
+fi
+
+if [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]] && ! gnome-extensions list --enabled 2>/dev/null | grep -qi appindicator; then
+    warn "GNOME has no system tray by default, so the battery icon won't show."
+    warn "Install and enable the \"AppIndicator and KStatusNotifierItem Support\""
+    warn "extension (Debian: gnome-shell-extension-appindicator), then log out and in."
 fi
 
 say "Installed. Click the headset battery icon in the system tray to open settings."

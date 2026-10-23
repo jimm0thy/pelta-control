@@ -20,7 +20,7 @@ cd pelta-control
 
 The installer:
 
-- installs any missing dependencies (on Arch-based distros: `python-pyqt6`, `libnotify`, `libpulse`)
+- installs any missing dependencies with pacman, apt, dnf or zypper (see [Other distros](#other-distros))
 - copies the scripts to `~/.local/bin`
 - installs the udev rule to `/etc/udev/rules.d/` (asks for your sudo password)
 - installs and starts the `pelta-wake` user service
@@ -110,6 +110,23 @@ Runtime files: `$XDG_RUNTIME_DIR/pelta.json` (current status, written by the dae
 - `notify-send` (libnotify)
 
 Tested on CachyOS with KDE Plasma 6. The tray app should work on any desktop with a system tray, but the battery icons come from your icon theme, so they may look different outside KDE.
+
+### Other distros
+
+Nothing in the tools is Arch-specific. The installer detects your package manager and installs these:
+
+| | Arch / CachyOS | Debian / Ubuntu | Fedora | openSUSE |
+|---|---|---|---|---|
+| PyQt6 | `python-pyqt6` | `python3-pyqt6` | `python3-pyqt6` | `python3-PyQt6` |
+| notify-send | `libnotify` | `libnotify-bin` | `libnotify` | `libnotify-tools` |
+| pactl | `libpulse` | `pulseaudio-utils` | `pulseaudio-utils` | `pulseaudio-utils` |
+
+`pactl` works with PipeWire as well as PulseAudio. Package names can change between releases; if the install fails, install the equivalents yourself and run `./install.sh` again.
+
+- **Older releases:** PyQt6 is packaged in Debian 12 and Ubuntu 22.04 and newer. On older releases, install it with `pip install --user PyQt6`.
+- **GNOME:** GNOME has no system tray by default, so the battery icon won't appear. Ubuntu already includes the AppIndicator extension. On Debian and other GNOME setups, install and enable **AppIndicator and KStatusNotifierItem Support** (Debian package `gnome-shell-extension-appindicator`), then log out and back in. The installer warns if it's missing. The volume fix, notifications and `pelta-ctl` work without it.
+- **`~/.local/bin` not in PATH:** Debian and Ubuntu only add it at login if the folder already exists, so on a new account you may need to log out and back in once after installing.
+- **PulseAudio instead of PipeWire:** the tools should work, but the wake bug and fix have only been tested with PipeWire.
 
 ## Troubleshooting
 

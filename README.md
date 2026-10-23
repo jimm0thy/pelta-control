@@ -8,6 +8,9 @@ Linux tools for the **ASUS ROG Pelta** wireless headset used with its 2.4 GHz US
 
 Everything runs as your normal user. Root is only needed once, to install a udev rule.
 
+**This project has been vibe coded with Claude**
+
+
 ![Settings window](docs/screenshot.png)
 
 ## Install

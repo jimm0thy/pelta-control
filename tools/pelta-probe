@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Send the status queries Armoury Crate sends on startup, one at a time,
+and print every report the headset sends back."""
+import os, select, time
+
+DEV = "/dev/pelta-hid"
+QUERIES = [
+    "cc12000001",
+    "cc1208",
+    "cc1207",
+    "cc1218",
+    "cc1213",
+    "cc120e",
+]
+
+fd = os.open(DEV, os.O_RDWR)
+# drain anything already queued
+while select.select([fd], [], [], 0)[0]:
+    os.read(fd, 256)
+
+for q in QUERIES:
+    pkt = bytes.fromhex(q)
+    os.write(fd, pkt + bytes(64 - len(pkt)))
+    print(f"sent {pkt.hex(' ')}")
+    end = time.time() + 1.0
+    while (left := end - time.time()) > 0:
+        if select.select([fd], [], [], left)[0]:
+            print("   got", os.read(fd, 256)[:16].hex(" "))
+os.close(fd)

@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""ROG Pelta tray icon with a settings window.
+
+Battery/charging come from the pelta-wake daemon's state file. Headset
+commands go through pelta-ctl (loaded from the same folder as this script),
+so the GUI and the command line share one implementation.
+"""
+import importlib.util, json, os, sys
+from importlib.machinery import SourceFileLoader
+
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QAction, QColor, QIcon
+from PyQt6.QtWidgets import (
+    QApplication, QCheckBox, QColorDialog, QComboBox, QFormLayout, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSlider,
+    QSpinBox, QSystemTrayIcon, QVBoxLayout, QWidget,
+)
+
+STATE_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "pelta.json")
+CTL_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pelta-ctl")
+
+
+def load_ctl():
+    loader = SourceFileLoader("pelta_ctl", CTL_PATH)
+    spec = importlib.util.spec_from_loader("pelta_ctl", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+ctl = load_ctl()
+
+SLEEP_CHOICES = [("Never", 0), ("5 min", 5), ("10 min", 10), ("15 min", 15)]
+
+
+def read_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def run(fn, *args):
+    """Call a pelta-ctl function; return an error string or None."""
+    try:
+        fn(*args)
+        return None
+    except SystemExit as e:
+        return str(e.code).removeprefix("pelta-ctl: ")
+    except OSError as e:
+        return f"{ctl.DEV}: {e.strerror}"
+
+
+class Window(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("ROG Pelta")
+        self.setWindowIcon(QIcon.fromTheme("audio-headset"))
+        self.setMinimumWidth(360)
+        root = QVBoxLayout(self)
+
+        # --- headset status -------------------------------------------------
+        box = QGroupBox("Headset")
+        form = QFormLayout(box)
+        self.battery = QProgressBar()
+        self.battery.setRange(0, 100)
+        self.status = QLabel()
+        form.addRow("Battery", self.battery)
+        form.addRow("Status", self.status)
+        root.addWidget(box)
+
+        # --- lighting -------------------------------------------------------
+        box = QGroupBox("Lighting")
+        form = QFormLayout(box)
+
+        self.mode = QComboBox()
+        self.mode.addItems([m.capitalize() for m in ctl.MODES] + ["Off"])
+        self.mode.currentIndexChanged.connect(self.lighting_changed)
+        form.addRow("Mode", self.mode)
+
+        self.color = QColor("#ff0000")
+        self.color_btn = QPushButton()
+        self.color_btn.clicked.connect(self.pick_color)
+        form.addRow("Color", self.color_btn)
+
+        self.swatches = QWidget()
+        grid = QGridLayout(self.swatches)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+        for i, (name, hexstr) in enumerate(ctl.COLORS.items()):
+            b = QPushButton()
+            b.setFixedSize(24, 24)
+            b.setToolTip(name)
+            b.setStyleSheet(f"background:#{hexstr}; border:1px solid palette(mid); border-radius:4px;")
+            b.clicked.connect(lambda _=False, h=hexstr: self.set_color(QColor("#" + h)))
+            grid.addWidget(b, i // 8, i % 8)
+        form.addRow("", self.swatches)
+
+        row = QHBoxLayout()
+        self.bright = QSlider(Qt.Orientation.Horizontal)
+        self.bright.setRange(0, 100)
+        self.bright.setPageStep(10)
+        self.bright_lbl = QLabel()
+        self.bright_lbl.setMinimumWidth(36)
+        self.bright.valueChanged.connect(self.lighting_changed)
+        row.addWidget(self.bright)
+        row.addWidget(self.bright_lbl)
+        form.addRow("Brightness", row)
+        root.addWidget(box)
+
+        # Sliders and swatches fire rapidly; send only after a short pause.
+        self.light_timer = QTimer(self, singleShot=True, interval=250)
+        self.light_timer.timeout.connect(self.apply_lighting)
+
+        # --- power ----------------------------------------------------------
+        self.power_box = QGroupBox("Power")
+        form = QFormLayout(self.power_box)
+        self.sleep = QComboBox()
+        for label, _ in SLEEP_CHOICES:
+            self.sleep.addItem(label)
+        self.sleep.currentIndexChanged.connect(self.apply_power)
+        form.addRow("Auto sleep", self.sleep)
+
+        row = QHBoxLayout()
+        self.alert_on = QCheckBox("Warn at")
+        self.alert = QSpinBox()
+        self.alert.setRange(5, 50)
+        self.alert.setSuffix(" %")
+        self.alert_on.toggled.connect(self.apply_power)
+        self.power_timer = QTimer(self, singleShot=True, interval=700)
+        self.power_timer.timeout.connect(self.apply_power)
+        self.alert.valueChanged.connect(lambda _: self.power_timer.start())
+        row.addWidget(self.alert_on)
+        row.addWidget(self.alert)
+        row.addStretch()
+        form.addRow("Low battery", row)
+        root.addWidget(self.power_box)
+
+        # --- microphone -----------------------------------------------------
+        box = QGroupBox("Microphone")
+        col = QVBoxLayout(box)
+        self.sidetone = QCheckBox("Sidetone (hear your own voice)")
+        self.echo = QCheckBox("Echo cancellation")
+        self.sidetone.toggled.connect(
+            lambda on: self.mic_cmd([0xCC, 0x41, 0x11, 0, 0, int(on)], sidetone=on))
+        self.echo.toggled.connect(
+            lambda on: self.mic_cmd([0xCC, 0x41, 0x02, 0, 0, int(on)], echo_cancel=on))
+        col.addWidget(self.sidetone)
+        col.addWidget(self.echo)
+        root.addWidget(box)
+
+        self.msg = QLabel()
+        self.msg.setWordWrap(True)
+        root.addWidget(self.msg)
+
+        self.loading = False
+        self.power = None          # (sleep, alert, on) last read from headset
+
+    # ---- loading ------------------------------------------------------------
+    def showEvent(self, event):
+        self.load()
+        super().showEvent(event)
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+
+    def load(self):
+        self.loading = True
+        self.msg.clear()
+        saved = ctl.load_saved()
+
+        rgb = saved.get("rgb")
+        if rgb == "off":
+            self.mode.setCurrentText("Off")
+        elif isinstance(rgb, dict):
+            self.mode.setCurrentText(rgb["mode"].capitalize())
+            self.color = QColor("#" + rgb["color"])
+            self.bright.setValue(rgb["brightness"])
+        else:
+            self.bright.setValue(50)
+        self.sidetone.setChecked(bool(saved.get("sidetone")))
+        self.echo.setChecked(bool(saved.get("echo_cancel")))
+        self.update_lighting_widgets()
+
+        self.power = None
+        holder = {}
+        err = run(lambda: holder.update(v=ctl.read_settings()))
+        if err:
+            self.power_box.setEnabled(False)
+            self.power_box.setTitle("Power (wake the headset to change)")
+        else:
+            sleep_min, _, alert, on = holder["v"]
+            self.power = (sleep_min, alert, on)
+            self.power_box.setEnabled(True)
+            self.power_box.setTitle("Power")
+            values = [v for _, v in SLEEP_CHOICES]
+            if sleep_min in values:
+                self.sleep.setCurrentIndex(values.index(sleep_min))
+            self.alert.setValue(min(max(alert, 5), 50))
+            self.alert_on.setChecked(bool(on))
+            self.alert.setEnabled(bool(on))
+        self.loading = False
+        self.refresh_status()
+
+    def refresh_status(self):
+        s = read_state()
+        pct = s.get("battery")
+        if pct is None:
+            self.battery.setValue(0)
+            self.battery.setFormat("no data yet")
+        else:
+            self.battery.setValue(pct)
+            self.battery.setFormat(f"{pct}%" + ("" if s.get("live") else " (last known)"))
+        parts = []
+        if s.get("awake") is False:
+            parts.append("asleep")
+        elif s.get("awake"):
+            parts.append("awake")
+        if s.get("charging"):
+            parts.append("charging")
+        self.status.setText(", ".join(parts) or "unknown")
+
+    # ---- lighting -----------------------------------------------------------
+    def update_lighting_widgets(self):
+        mode = self.mode.currentText().lower()
+        self.color_btn.setEnabled(mode not in ("cycle", "off"))
+        self.swatches.setEnabled(mode not in ("cycle", "off"))
+        self.bright.setEnabled(mode != "off")
+        self.bright_lbl.setText(f"{self.bright.value()}%")
+        hexstr = self.color.name()[1:]
+        self.color_btn.setText(ctl.color_name(hexstr))
+        fg = "black" if self.color.lightness() > 140 else "white"
+        self.color_btn.setStyleSheet(f"background:#{hexstr}; color:{fg};")
+
+    def set_color(self, c):
+        if c.isValid():
+            self.color = c
+            self.lighting_changed()
+
+    def pick_color(self):
+        self.set_color(QColorDialog.getColor(self.color, self, "Headset color"))
+
+    def lighting_changed(self):
+        self.update_lighting_widgets()
+        if not self.loading:
+            self.light_timer.start()
+
+    def apply_lighting(self):
+        mode = self.mode.currentText().lower()
+        if mode == "off":
+            err = run(ctl.send, [0xCC, 0x51, 0x28, 0, 0, 1, 0, 0, 0, 0xFF])
+            if not err:
+                ctl.remember(rgb="off")
+        else:
+            rgb = bytes([self.color.red(), self.color.green(), self.color.blue()])
+            b = self.bright.value()
+            err = run(ctl.send, [0xCC, 0x51, 0x28, 0, 0, ctl.MODES[mode], b, *rgb])
+            if not err:
+                ctl.remember(rgb={"mode": mode, "color": rgb.hex(), "brightness": b})
+        self.msg.setText(err or "")
+
+    # ---- power --------------------------------------------------------------
+    def apply_power(self):
+        self.alert.setEnabled(self.alert_on.isChecked())
+        if self.loading or self.power is None:
+            return
+        want = (SLEEP_CHOICES[self.sleep.currentIndex()][1],
+                self.alert.value(), int(self.alert_on.isChecked()))
+        if want == self.power:
+            return
+        err = run(ctl.write_power, *want)
+        if err:
+            self.msg.setText(err)
+            self.load()                 # show what the headset really has
+        else:
+            self.power = want
+            self.msg.clear()
+
+    # ---- microphone ---------------------------------------------------------
+    def mic_cmd(self, payload, **saved):
+        if self.loading:
+            return
+        err = run(ctl.send, payload)
+        if not err:
+            ctl.remember(**saved)
+        self.msg.setText(err or "")
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setDesktopFileName("pelta-tray")
+
+    window = Window()
+    tray = QSystemTrayIcon()
+    menu = QMenu()
+    settings_action = QAction("Settings…")
+    quit_action = QAction("Quit")
+    settings_action.triggered.connect(lambda: (window.show(), window.raise_(), window.activateWindow()))
+    quit_action.triggered.connect(app.quit)
+    menu.addAction(settings_action)
+    menu.addSeparator()
+    menu.addAction(quit_action)
+    tray.setContextMenu(menu)
+
+    def toggle(reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            if window.isVisible():
+                window.hide()
+            else:
+                settings_action.trigger()
+    tray.activated.connect(toggle)
+
+    last = {"s": None}
+
+    def refresh():
+        s = read_state()
+        if window.isVisible():
+            window.refresh_status()
+        if s == last["s"]:
+            return
+        last["s"] = s
+        pct = s.get("battery")
+        if pct is None:
+            icon, tip = "battery-missing", "ROG Pelta: no data yet"
+        else:
+            level = min(100, round(pct / 10) * 10)
+            icon = f"battery-{level:03d}" + ("-charging" if s.get("charging") else "")
+            status = []
+            if s.get("charging"):
+                status.append("charging")
+            if s.get("awake") is False:
+                status.append("asleep")
+            if not s.get("live"):
+                status.append("last known")
+            tip = f"ROG Pelta: {pct}%" + (f" ({', '.join(status)})" if status else "")
+        tray.setIcon(QIcon.fromTheme(icon))
+        tray.setToolTip(tip)
+
+    refresh()
+    tray.show()
+    timer = QTimer()
+    timer.timeout.connect(refresh)
+    timer.start(5000)
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

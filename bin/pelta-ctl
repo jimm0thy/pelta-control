@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Control an ASUS ROG Pelta (2.4 GHz dongle) through /dev/pelta-hid.
+
+Commands are copied byte-for-byte from what Armoury Crate sends on Windows.
+Every command is a 64-byte output report starting with report ID 0xCC.
+"""
+import argparse, json, os, select, sys, time
+
+DEV = "/dev/pelta-hid"
+SAVED = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                     "pelta", "settings.json")
+
+MODES = {"static": 1, "breathing": 2, "strobing": 3, "cycle": 4}
+
+# Armoury Crate also sends cc 41 03 00 00 <0/1> and cc 41 04 00 00 <10 bands>
+# for its EQ presets, but neither had any audible effect on Linux, so they
+# are not offered here.
+
+
+def send(payload):
+    pkt = bytes(payload) + bytes(64 - len(payload))
+    fd = os.open(DEV, os.O_RDWR)
+    try:
+        os.write(fd, pkt)
+    finally:
+        os.close(fd)
+
+
+def read_settings():
+    """Ask the headset for its settings; returns (sleep_min, battery, alert_pct, alert_on)."""
+    fd = os.open(DEV, os.O_RDWR)
+    try:
+        while select.select([fd], [], [], 0)[0]:
+            os.read(fd, 256)
+        os.write(fd, bytes.fromhex("cc1207") + bytes(61))
+        end = time.time() + 2
+        while (left := end - time.time()) > 0:
+            if not select.select([fd], [], [], left)[0]:
+                break
+            r = os.read(fd, 256)
+            if r[:3] == b"\xcc\x12\x07":
+                if r[5:7] == b"\xff\xaa":
+                    sys.exit("pelta-ctl: headset is asleep or off; wake it and retry")
+                return r[5], r[6], r[7], r[8]
+    finally:
+        os.close(fd)
+    sys.exit("pelta-ctl: no reply from headset")
+
+
+def write_power(sleep_min, alert_pct, alert_on):
+    send([0xCC, 0x51, 0x37, 0, 0, sleep_min, alert_pct, alert_on])
+    time.sleep(0.3)
+    got = read_settings()
+    if (got[0], got[2], got[3]) != (sleep_min, alert_pct, alert_on):
+        sys.exit(f"pelta-ctl: headset did not accept it (now reports {got})")
+
+
+def load_saved():
+    try:
+        with open(SAVED) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def remember(**kv):
+    data = load_saved()
+    data.update(kv)
+    os.makedirs(os.path.dirname(SAVED), exist_ok=True)
+    with open(SAVED, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+COLORS = {
+    "red": "ff0000", "orange": "ff4000", "amber": "ff8000", "yellow": "ffff00",
+    "lime": "80ff00", "green": "00ff00", "mint": "00ff80", "cyan": "00ffff",
+    "sky": "0080ff", "blue": "0000ff", "purple": "8000ff", "violet": "c000ff",
+    "magenta": "ff00ff", "pink": "ff0080", "white": "ffffff",
+}
+
+
+def color_name(hexstr):
+    return next((n for n, h in COLORS.items() if h == hexstr), "#" + hexstr)
+
+
+def parse_color(s):
+    name = s.lower()
+    if name in COLORS:
+        return bytes.fromhex(COLORS[name])
+    s = s.lstrip("#")
+    if len(s) != 6:
+        raise argparse.ArgumentTypeError(
+            f"unknown color '{name}'; use a name from 'pelta-ctl colors' or hex RRGGBB")
+    try:
+        return bytes.fromhex(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("color must be a name or hex RRGGBB")
+
+
+def pct(s):
+    v = int(s)
+    if not 0 <= v <= 100:
+        raise argparse.ArgumentTypeError("brightness must be 0-100")
+    return v
+
+
+def on_off(s):
+    if s not in ("on", "off"):
+        raise argparse.ArgumentTypeError("use on or off")
+    return 1 if s == "on" else 0
+
+
+def main():
+    p = argparse.ArgumentParser(prog="pelta-ctl")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("rgb", help="set lighting")
+    r.add_argument("mode", choices=MODES)
+    r.add_argument("color", nargs="?", type=parse_color, default=b"\xff\x00\x00",
+                   help="name or RRGGBB (ignored by cycle), default red")
+    r.add_argument("-b", "--brightness", type=pct, default=50,
+                   help="0-100, default 50 (0 = lights off)")
+
+    o = sub.add_parser("off", help="turn lighting off")
+
+    sub.add_parser("colors", help="list color names")
+
+    s = sub.add_parser("sleep", help="auto-sleep timer")
+    s.add_argument("minutes", choices=["never", "5", "10", "15"])
+
+    l = sub.add_parser("alert", help="low-battery warning level")
+    l.add_argument("level", help="percent (5-50) or off")
+
+    sub.add_parser("status", help="show battery and settings")
+
+    t = sub.add_parser("sidetone", help="hear your own mic")
+    t.add_argument("state", type=on_off)
+
+    e = sub.add_parser("echo-cancel", help="mic echo cancellation")
+    e.add_argument("state", type=on_off)
+
+    a = p.parse_args()
+
+    if a.cmd == "rgb":
+        send([0xCC, 0x51, 0x28, 0, 0, MODES[a.mode], a.brightness, *a.color])
+        remember(rgb={"mode": a.mode, "color": a.color.hex(), "brightness": a.brightness})
+    elif a.cmd == "off":
+        send([0xCC, 0x51, 0x28, 0, 0, 1, 0, 0, 0, 0xFF])
+        remember(rgb="off")
+    elif a.cmd == "sleep":
+        mins = 0 if a.minutes == "never" else int(a.minutes)
+        _, _, alert, on = read_settings()       # keep the alert as it is
+        write_power(mins, alert, on)
+    elif a.cmd == "alert":
+        sleep_min, _, alert, _ = read_settings()
+        if a.level == "off":
+            write_power(sleep_min, alert, 0)
+        else:
+            lvl = int(a.level)
+            if not 5 <= lvl <= 50:
+                sys.exit("pelta-ctl: alert level must be 5-50 or off")
+            write_power(sleep_min, lvl, 1)
+    elif a.cmd == "status":
+        sleep_min, batt, alert, on = read_settings()
+        print(f"battery     {batt}%")
+        print(f"sleep timer {'never' if sleep_min == 0 else f'{sleep_min} min'}")
+        print(f"low alert   {f'{alert}%' if on else 'off'}")
+        saved = load_saved()
+        onoff = lambda v: "unknown" if v is None else ("on" if v else "off")
+        rgb = saved.get("rgb")
+        if isinstance(rgb, dict):
+            rgb = f"{rgb['mode']} {color_name(rgb['color'])} at {rgb['brightness']}%"
+        print("\nlast set with pelta-ctl (the headset can't be asked for these):")
+        print(f"lighting    {rgb or 'unknown'}")
+        print(f"sidetone    {onoff(saved.get('sidetone'))}")
+        print(f"echo cancel {onoff(saved.get('echo_cancel'))}")
+    elif a.cmd == "colors":
+        for n, h in COLORS.items():
+            print(f"{n:<8} {h}")
+    elif a.cmd == "sidetone":
+        send([0xCC, 0x41, 0x11, 0, 0, a.state])
+        remember(sidetone=bool(a.state))
+    elif a.cmd == "echo-cancel":
+        send([0xCC, 0x41, 0x02, 0, 0, a.state])
+        remember(echo_cancel=bool(a.state))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except OSError as err:
+        sys.exit(f"pelta-ctl: {DEV}: {err.strerror}")

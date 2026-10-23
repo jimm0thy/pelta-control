@@ -1,0 +1,25 @@
+#!/bin/bash
+# Re-sync the ROG Pelta's hardware volume after it wakes up at max volume.
+# Called by pelta-wake-hid on every wake. Nudges the volume so PipeWire
+# writes it to the headset, then restores the exact original value.
+
+sleep 1
+
+SINK=$(pactl list short sinks | awk '/ROG_PELTA/ {print $2; exit}')
+if [[ -z "$SINK" ]]; then
+    echo "ERROR: Pelta sink not found."
+    exit 1
+fi
+
+# Raw volume value (e.g. 3932), not the rounded percent, so nothing drifts.
+original=$(pactl get-sink-volume "$SINK" | awk '{print $3; exit}')
+if [[ -z "$original" ]]; then
+    echo "ERROR: Could not read volume."
+    exit 1
+fi
+
+pactl set-sink-volume "$SINK" +2%
+sleep 0.5
+pactl set-sink-volume "$SINK" "$original"
+
+echo "Restored volume to raw $original on $SINK"

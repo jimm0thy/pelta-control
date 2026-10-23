@@ -1,0 +1,10 @@
+[Unit]
+Description=ROG Pelta headset daemon (wake volume fix, battery tracking)
+After=pipewire-pulse.service
+
+[Service]
+ExecStart=%h/.local/bin/pelta-wake-hid
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

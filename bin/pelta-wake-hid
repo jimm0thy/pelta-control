@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+import json, os, subprocess, time
+
+DEV = "/dev/pelta-hid"
+RECOVER = os.path.expanduser("~/.local/bin/pelta-recover")
+STATE_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "pelta.json")
+CACHE_FILE = os.path.expanduser("~/.cache/pelta-battery")
+LOW_DEFAULT = 15  # used until the headset reports its own alert level
+
+# Status queries Armoury Crate sends. Replies arrive as normal reports:
+#   cc 12 00 00 01 -> byte 5: 1 = headset connected
+#   cc 12 08       -> byte 5: 1 = charging
+#   cc 12 07       -> byte 5: sleep timer, byte 6: battery %, 7-8: alert settings
+# A sleeping headset answers everything with "ff aa".
+QUERIES = [bytes.fromhex(h) for h in ("cc12000001", "cc1208", "cc1207")]
+
+state = {"battery": None, "live": False, "charging": None, "awake": None,
+         "alert": LOW_DEFAULT}
+try:
+    state["battery"] = int(open(CACHE_FILE).read())
+except (OSError, ValueError):
+    pass
+
+
+def notify(title, body):
+    subprocess.run(["notify-send", "-a", "ROG Pelta", title, body])
+
+
+def save():
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
+    if state["battery"] is not None:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, "w") as f:
+            f.write(str(state["battery"]))
+
+
+def query(fd):
+    for q in QUERIES:
+        os.write(fd, q + bytes(64 - len(q)))
+        time.sleep(0.2)
+
+
+def set_battery(value):
+    if value > 100:
+        print("Ignoring battery value", value, flush=True)
+        return
+    old = state["battery"] if state["live"] else None
+    if old is not None:
+        if value > old:
+            state["charging"] = True
+        elif value < old:
+            state["charging"] = False
+    state["battery"], state["live"] = value, True
+    save()
+    print(f"Battery {value}%", flush=True)
+    low = state["alert"]                   # None = alert turned off on headset
+    if low is not None and not state["charging"] and value <= low and (old is None or old > low):
+        notify("Headset battery low", f"{value}% remaining")
+    if state["charging"] and value >= 100 and (old or 0) < 100:
+        notify("Headset fully charged", "100%")
+
+
+def handle(r, fd):
+    if len(r) < 8 or r[0] != 0xCC or r[1] != 0x12:
+        return
+    kind, value = r[2], r[5]
+
+    if kind == 0x0E:                       # wake / sleep (pushed by headset)
+        awake = r[3:8] == bytes(5)
+        state["awake"] = awake
+        save()
+        if awake:
+            print("Wake detected", flush=True)
+            subprocess.run([RECOVER])
+            query(fd)                      # refresh charging state too
+        return
+
+    if r[5:7] == b"\xff\xaa":              # headset asleep / unreachable
+        return
+
+    if kind == 0x00:                       # connection status reply
+        state["awake"] = value == 1
+        save()
+
+    elif kind == 0x09:                     # battery % (pushed)
+        set_battery(value)
+
+    elif kind == 0x07:                     # settings reply, battery in byte 6
+        state["alert"] = r[7] if r[8] == 1 else None
+        set_battery(r[6])
+
+    elif kind == 0x08:                     # charging (pushed or reply)
+        state["charging"] = value == 1
+        save()
+        print(f"Charging: {state['charging']}", flush=True)
+
+
+save()
+while True:
+    try:
+        fd = os.open(DEV, os.O_RDWR)
+    except OSError:
+        time.sleep(5)
+        continue
+    print("Listening on", DEV, flush=True)
+    try:
+        query(fd)                          # get real values at startup
+        while True:
+            r = os.read(fd, 256)
+            if not r:
+                break
+            handle(r, fd)
+    except OSError:
+        print("Device removed, waiting", flush=True)
+    finally:
+        os.close(fd)

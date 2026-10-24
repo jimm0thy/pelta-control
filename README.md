@@ -1,6 +1,6 @@
 # ROG Pelta for Linux
 
-Linux tools for the **ASUS ROG Pelta** wireless headset used with its 2.4 GHz USB dongle:
+Linux tools for the **ASUS ROG Pelta** wireless headset, used with its 2.4 GHz USB dongle or connected directly by USB-C cable:
 
 - **Fixes the volume bug.** On Linux the headset wakes from sleep at max volume no matter what the system volume is. A small background service catches every wake and puts the volume back.
 - **Battery in the system tray**, with a charging indicator, a low-battery notification and a "fully charged" notification.
@@ -88,6 +88,12 @@ The `pelta-wake` service reads the battery level when it starts, every time the 
 
 While the headset is asleep or off, the tray shows the last known level, marked **last known** in the tooltip.
 
+### Wired (USB-C) mode
+
+With the headset plugged in by cable, it shows up as its own USB device (`0b05:1b82`) instead of the dongle (`0b05:1b84`), with the same command interface. The udev rule matches both, so the tray, settings window and `pelta-ctl` work the same way, and the battery shows as charging. The headset shouldn't sleep while wired, so the volume fix has nothing to do in this mode.
+
+Wired mode has been checked with the status queries; lighting and other settings use the same commands but haven't been confirmed over the cable yet. Use either the dongle or the cable, not both at once: both would claim `/dev/pelta-hid`. If you switch from the dongle to the cable without unplugging the dongle, run `systemctl --user restart pelta-wake` so the daemon picks up the cable connection.
+
 ## Files
 
 | Installed to | What it is |
@@ -133,13 +139,13 @@ Nothing in the tools is Arch-specific. The installer detects your package manage
 
 ## Troubleshooting
 
-**`/dev/pelta-hid` doesn't exist.** Make sure the dongle is plugged in and check that the rule matches it:
+**`/dev/pelta-hid` doesn't exist.** Make sure the dongle (or the headset's USB-C cable) is plugged in and check that the rule matches it:
 
 ```
 udevadm info /dev/hidrawN | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_USB_INTERFACE_NUM'
 ```
 
-Try each `hidrawN` that belongs to the dongle (`ls -l /sys/class/hidraw/ | grep -i 0b05:1b84` lists them). The rule expects vendor `0b05`, model `1b84` and interface `03`. If your dongle uses a different interface number, change it in `udev/70-pelta.rules` and run `./install.sh` again.
+Try each `hidrawN` that belongs to the headset (`ls -l /sys/class/hidraw/ | grep -iE '0b05:1b8(4|2)'` lists them). The rule expects vendor `0b05`, model `1b84` (dongle) or `1b82` (cable) and interface `03`. If yours differs, change it in `udev/70-pelta.rules` and run `./install.sh` again.
 
 **Volume still jumps to max after a wake.** Check the service log while waking the headset:
 
@@ -167,7 +173,7 @@ Switching PipeWire to software volume (`api.alsa.soft-mixer`) avoids the bug, bu
 
 ### Detecting a wake
 
-The dongle reports headset events as HID input reports on its vendor interface (interface 3, report ID `0xCC`). The daemon reads `/dev/pelta-hid` directly, which needs no root, no usbmon and no polling. The udev rule gives that interface a fixed name, so it doesn't matter which `hidrawN` number or USB port it gets.
+The dongle reports headset events as HID input reports on its vendor interface (interface 3, report ID `0xCC`). The headset has the same interface when connected by cable. The daemon reads `/dev/pelta-hid` directly, which needs no root, no usbmon and no polling. The udev rule gives that interface a fixed name, so it doesn't matter which `hidrawN` number or USB port it gets.
 
 ### Protocol
 
@@ -183,11 +189,11 @@ Everything goes through report ID `0xCC`, 64 bytes, in both directions. Commands
 | `cc 12 08 00 00 <0/1>` | Charging cable unplugged / plugged in |
 | `cc 99 …`, `cc 70 …` | Button presses (play/pause); media keys arrive as report `02` |
 
-**Status queries** (each reply starts with the same three bytes)
+**Status queries** (each reply starts with the same three bytes; the same queries work over the USB-C cable)
 
 | Query | Reply |
 |---|---|
-| `cc 12 00 00 01` | byte 5: `1` = headset connected |
+| `cc 12 00 00 01` | Dongle: byte 5 `1` = headset connected, all zeros = asleep. Cable: byte 5 is `0` followed by other data (`07 00 04` on the tested unit, possibly a version) |
 | `cc 12 08` | byte 5: `1` = charging |
 | `cc 12 07` | byte 5: sleep timer (minutes, 0 = never), byte 6: battery %, byte 7: alert level %, byte 8: alert on/off |
 | `cc 12 13`, `cc 12 18` | Sent by Armoury Crate; meaning unknown (not surround, sidetone or mic state as far as tested) |

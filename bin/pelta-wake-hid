@@ -82,13 +82,20 @@ def handle(r, fd):
         return
 
     if kind == 0x00:                       # connection status reply
-        state["awake"] = value == 1
+        # Dongle: byte 5 is 1/0 for "headset connected". Wired USB: byte 5
+        # is 0 followed by other data, and the headset is always reachable,
+        # so only an all-zero reply means asleep.
+        if value == 1:
+            state["awake"] = True
+        elif not any(r[6:16]):
+            state["awake"] = False
         save()
 
     elif kind == 0x09:                     # battery % (pushed)
         set_battery(value)
 
     elif kind == 0x07:                     # settings reply, battery in byte 6
+        state["awake"] = True               # it answered, so it's awake
         state["alert"] = r[7] if r[8] == 1 else None
         set_battery(r[6])
 

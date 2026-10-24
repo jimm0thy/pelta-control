@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Control an ASUS ROG Pelta (2.4 GHz dongle) through /dev/pelta-hid.
+"""Control an ASUS ROG Pelta (2.4 GHz dongle or USB-C cable) through /dev/pelta-hid.
 
 Commands are copied byte-for-byte from what Armoury Crate sends on Windows.
 Every command is a 64-byte output report starting with report ID 0xCC.

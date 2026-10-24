@@ -92,7 +92,7 @@ While the headset is asleep or off, the tray shows the last known level, marked 
 
 With the headset plugged in by cable, it shows up as its own USB device (`0b05:1b82`) instead of the dongle (`0b05:1b84`), with the same command interface. The udev rule matches both, so the tray, settings window and `pelta-ctl` work the same way, and the battery shows as charging. The headset shouldn't sleep while wired, so the volume fix has nothing to do in this mode.
 
-Wired mode has been checked with the status queries; lighting and other settings use the same commands but haven't been confirmed over the cable yet. Use either the dongle or the cable, not both at once: both would claim `/dev/pelta-hid`. If you switch from the dongle to the cable without unplugging the dongle, run `systemctl --user restart pelta-wake` so the daemon picks up the cable connection.
+Each connection gets its own device: `/dev/pelta-hid-dongle` and `/dev/pelta-hid-usb`. The daemon checks every few seconds which one is present and switches automatically, preferring the cable when both are connected. The settings window's title and the tray tooltip show the current connection (**ROG Pelta 2.4GHz** or **ROG Pelta USB**), and `pelta-ctl status` prints it.
 
 ## Files
 
@@ -103,7 +103,7 @@ Wired mode has been checked with the status queries; lighting and other settings
 | `~/.local/bin/pelta-ctl` | Command-line tool |
 | `~/.local/bin/pelta-tray` | Tray icon and settings window (must sit next to `pelta-ctl`) |
 | `~/.config/systemd/user/pelta-wake.service` | User service that runs the daemon |
-| `/etc/udev/rules.d/70-pelta.rules` | Creates `/dev/pelta-hid` and gives your user access to it |
+| `/etc/udev/rules.d/70-pelta.rules` | Creates `/dev/pelta-hid-dongle` / `/dev/pelta-hid-usb` and gives your user access to them |
 | `~/.local/share/applications/pelta-tray.desktop` | App launcher entry |
 | `~/.config/autostart/pelta-tray.desktop` | Starts the tray app at login |
 
@@ -139,7 +139,7 @@ Nothing in the tools is Arch-specific. The installer detects your package manage
 
 ## Troubleshooting
 
-**`/dev/pelta-hid` doesn't exist.** Make sure the dongle (or the headset's USB-C cable) is plugged in and check that the rule matches it:
+**`/dev/pelta-hid-dongle` (or `-usb`) doesn't exist.** Make sure the dongle (or the headset's USB-C cable) is plugged in and check that the rule matches it:
 
 ```
 udevadm info /dev/hidrawN | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_USB_INTERFACE_NUM'
@@ -173,7 +173,7 @@ Switching PipeWire to software volume (`api.alsa.soft-mixer`) avoids the bug, bu
 
 ### Detecting a wake
 
-The dongle reports headset events as HID input reports on its vendor interface (interface 3, report ID `0xCC`). The headset has the same interface when connected by cable. The daemon reads `/dev/pelta-hid` directly, which needs no root, no usbmon and no polling. The udev rule gives that interface a fixed name, so it doesn't matter which `hidrawN` number or USB port it gets.
+The dongle reports headset events as HID input reports on its vendor interface (interface 3, report ID `0xCC`). The headset has the same interface when connected by cable. The daemon reads that device directly, which needs no root, no usbmon and no polling. The udev rule gives that interface a fixed name, so it doesn't matter which `hidrawN` number or USB port it gets.
 
 ### Protocol
 

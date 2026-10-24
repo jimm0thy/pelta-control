@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Send the status queries Armoury Crate sends on startup, one at a time,
 and print every report the headset sends back."""
-import os, select, time
+import os, select, sys, time
 
-DEV = "/dev/pelta-hid"
+# Usage: pelta-probe [device]   (default: the USB-C connection, else the dongle)
+DEV = sys.argv[1] if len(sys.argv) > 1 else next(
+    (p for p in ("/dev/pelta-hid-usb", "/dev/pelta-hid-dongle") if os.path.exists(p)),
+    "/dev/pelta-hid-dongle")
+print("probing", DEV)
 QUERIES = [
     "cc12000001",
     "cc1208",

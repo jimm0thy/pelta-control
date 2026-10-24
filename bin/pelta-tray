@@ -49,7 +49,7 @@ def run(fn, *args):
     except SystemExit as e:
         return str(e.code).removeprefix("pelta-ctl: ")
     except OSError as e:
-        return f"{ctl.DEV}: {e.strerror}"
+        return e.strerror
 
 
 class Window(QWidget):
@@ -216,6 +216,8 @@ class Window(QWidget):
 
     def refresh_status(self):
         s = read_state()
+        mode = s.get("mode")
+        self.setWindowTitle(f"ROG Pelta {mode}" if mode else "ROG Pelta")
         pct = s.get("battery")
         if pct is None:
             self.battery.setValue(0)
@@ -224,7 +226,9 @@ class Window(QWidget):
             self.battery.setValue(pct)
             self.battery.setFormat(f"{pct}%" + ("" if s.get("live") else " (last known)"))
         parts = []
-        if s.get("awake") is False:
+        if not mode:
+            parts.append("not connected")
+        elif s.get("awake") is False:
             parts.append("asleep")
         elif s.get("awake"):
             parts.append("awake")
@@ -235,7 +239,7 @@ class Window(QWidget):
         # Follow wake/sleep while the window is open.
         if s.get("awake") and self.power is None and not self.loading:
             self.load_power()
-        elif s.get("awake") is False and self.power is not None:
+        elif (s.get("awake") is False or not mode) and self.power is not None:
             self.set_power_asleep()
 
     # ---- lighting -----------------------------------------------------------
@@ -351,7 +355,8 @@ def main():
                 status.append("asleep")
             if not s.get("live"):
                 status.append("last known")
-            tip = f"ROG Pelta: {pct}%" + (f" ({', '.join(status)})" if status else "")
+            name = f"ROG Pelta {s['mode']}" if s.get("mode") else "ROG Pelta"
+            tip = f"{name}: {pct}%" + (f" ({', '.join(status)})" if status else "")
         tray.setIcon(QIcon.fromTheme(icon))
         tray.setToolTip(tip)
 

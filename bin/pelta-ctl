@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Control an ASUS ROG Pelta (2.4 GHz dongle or USB-C cable) through /dev/pelta-hid.
+"""Control an ASUS ROG Pelta (2.4 GHz dongle or USB-C cable) through /dev/pelta-hid-usb or /dev/pelta-hid-dongle.
 
 Commands are copied byte-for-byte from what Armoury Crate sends on Windows.
 Every command is a 64-byte output report starting with report ID 0xCC.
 """
 import argparse, json, os, select, sys, time
 
-DEV = "/dev/pelta-hid"
+# Connections in order of preference (the cable wins if both are present).
+DEVICES = [("/dev/pelta-hid-usb", "USB"), ("/dev/pelta-hid-dongle", "2.4GHz")]
 SAVED = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
                      "pelta", "settings.json")
 
@@ -17,9 +18,24 @@ MODES = {"static": 1, "breathing": 2, "strobing": 3, "cycle": 4}
 # are not offered here.
 
 
+def connection():
+    """Return (device path, mode name) of the connected headset, or (None, None)."""
+    for path, mode in DEVICES:
+        if os.path.exists(path):
+            return path, mode
+    return None, None
+
+
+def device():
+    path, _ = connection()
+    if path is None:
+        sys.exit("pelta-ctl: headset not found (plug in the dongle or the USB-C cable)")
+    return path
+
+
 def send(payload):
     pkt = bytes(payload) + bytes(64 - len(payload))
-    fd = os.open(DEV, os.O_RDWR)
+    fd = os.open(device(), os.O_RDWR)
     try:
         os.write(fd, pkt)
     finally:
@@ -28,7 +44,7 @@ def send(payload):
 
 def read_settings():
     """Ask the headset for its settings; returns (sleep_min, battery, alert_pct, alert_on)."""
-    fd = os.open(DEV, os.O_RDWR)
+    fd = os.open(device(), os.O_RDWR)
     try:
         while select.select([fd], [], [], 0)[0]:
             os.read(fd, 256)
@@ -162,6 +178,7 @@ def main():
             write_power(sleep_min, lvl, 1)
     elif a.cmd == "status":
         sleep_min, batt, alert, on = read_settings()
+        print(f"connection  {connection()[1]}")
         print(f"battery     {batt}%")
         print(f"sleep timer {'never' if sleep_min == 0 else f'{sleep_min} min'}")
         print(f"low alert   {f'{alert}%' if on else 'off'}")
@@ -189,4 +206,4 @@ if __name__ == "__main__":
     try:
         main()
     except OSError as err:
-        sys.exit(f"pelta-ctl: {DEV}: {err.strerror}")
+        sys.exit(f"pelta-ctl: {err.strerror}")

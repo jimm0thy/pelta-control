@@ -128,10 +128,12 @@ disown
 
 # --- checks -----------------------------------------------------------------
 sleep 1
-if [[ -e /dev/pelta-hid ]]; then
-    say "Found the dongle at /dev/pelta-hid"
+if [[ -e /dev/pelta-hid-usb ]]; then
+    say "Found the headset on USB-C at /dev/pelta-hid-usb"
+elif [[ -e /dev/pelta-hid-dongle ]]; then
+    say "Found the dongle at /dev/pelta-hid-dongle"
 else
-    warn "/dev/pelta-hid not found. Plug in the dongle; if it still doesn't"
+    warn "Headset not found. Plug in the dongle or USB-C cable; if it still doesn't"
     warn "appear, see Troubleshooting in the README."
 fi
 

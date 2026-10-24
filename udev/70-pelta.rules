@@ -1,5 +1,7 @@
-# ASUS ROG Pelta: 2.4 GHz dongle (0b05:1b84) or headset on USB-C (0b05:1b82),
-# HID interface 3 in both cases.
-# Creates a stable /dev/pelta-hid and gives the logged-in user access to it,
-# so nothing needs root and the hidrawN number never matters.
-SUBSYSTEM=="hidraw", IMPORT{builtin}="usb_id", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1b84|1b82", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="pelta-hid", TAG+="uaccess"
+# ASUS ROG Pelta, HID interface 3 (the 0xCC command interface).
+# Each connection gets its own stable name and the logged-in user gets
+# access, so nothing needs root and the hidrawN number never matters:
+#   /dev/pelta-hid-dongle   2.4 GHz dongle      (0b05:1b84)
+#   /dev/pelta-hid-usb      headset on USB-C    (0b05:1b82)
+SUBSYSTEM=="hidraw", IMPORT{builtin}="usb_id", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1b84", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="pelta-hid-dongle", TAG+="uaccess"
+SUBSYSTEM=="hidraw", IMPORT{builtin}="usb_id", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1b82", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="pelta-hid-usb", TAG+="uaccess"

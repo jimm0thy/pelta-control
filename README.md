@@ -163,6 +163,8 @@ You should see `Wake detected` and a `Restored volume` line. If the wake is dete
 
 **`pelta-ctl` says the headset is asleep.** Sleep timer and alert changes need the headset awake. Lighting and mic commands are sent without a check, so they won't take effect while it's asleep either.
 
+**No sound at 5% or lower on 2.4 GHz.** This is a limit of the dongle, not a bug in these tools. Its volume control advertises a range down to −77 dB, but on the tested unit nothing below about −75 dB is audible, and everything from there up to about −73 dB plays at the same level. PipeWire maps 5% to about −78 dB, so the bottom few percent are silent; 6% is the quietest real level. The test wrote values straight to the dongle's volume control, bypassing PipeWire, so it should behave the same on any distro. Wired and Bluetooth use different volume paths and aren't affected. To listen more quietly on 2.4 GHz, keep the system volume at 6% or above and lower the app's own volume (or its slider in your desktop's audio menu).
+
 **Upgrading from an older root/usbmon-based fix.** The installer warns if it finds a system service whose name starts with `pelta`. Disable it with `sudo systemctl disable --now <name>` so the two don't both nudge the volume.
 
 ## How it works

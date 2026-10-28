@@ -8,12 +8,16 @@ Linux tools for the **ASUS ROG Pelta** wireless headset, used with its 2.4 GHz U
 
 Everything runs as your normal user. Root is only needed once, to install a udev rule.
 
+**Source code:** [github.com/jimm0thy/pelta-control](https://github.com/jimm0thy/pelta-control)
+
 **This project has been vibe coded with Claude**
 
 
 ![Settings window](docs/screenshot.png)
 
 ## Install
+
+The installer uses `sudo` to install packages and the udev rule, so you may want to read [`install.sh`](https://github.com/jimm0thy/pelta-control/blob/main/install.sh) and the [scripts it installs](https://github.com/jimm0thy/pelta-control/tree/main/bin) first.
 
 ```
 git clone https://github.com/jimm0thy/pelta-control.git

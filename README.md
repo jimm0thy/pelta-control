@@ -51,7 +51,7 @@ The tray icon shows the battery level in steps of 10%, with a plug badge while c
 | Audio | Sidetone on/off and volume, echo cancellation, voice prompt language |
 | Connection | 2.4 GHz link quality, from 1 (lowest latency) to 4 (highest quality). Only available with the dongle |
 
-The window reads the current settings from the headset each time it opens, and again when the headset wakes or the connection changes, so it always shows what the headset actually has. While the headset is asleep, the settings are greyed out. Changes are sent to the headset as you make them. Closing the window hides it; the tray icon keeps running. If you quit the tray app, start it again from **ROG Pelta** in the app launcher.
+The window reads the current settings from the headset each time it opens, and again when the headset wakes or the connection changes, so it always shows what the headset actually has. While the headset is asleep, the settings are greyed out; the Firmware row still shows the dongle's version when the dongle is connected. Changes are sent to the headset as you make them. Closing the window hides it; the tray icon keeps running. If you quit the tray app, start it again from **ROG Pelta** in the app launcher.
 
 If KDE hides the icon in the tray's overflow area, right-click the tray → **Configure System Tray → Entries** and set the Pelta entry to **Always shown**.
 
@@ -164,7 +164,7 @@ ASUS's web app [Gear Link](https://gearlink.asus.com/en) can also configure the 
 
 Settings changed in Gear Link show up in `pelta-ctl status` and the settings window too, since both read them from the headset (except echo cancellation). Gear Link's firmware update downloads a Windows tool (`ROG Firmware Update Tool.exe`), so firmware updates still need Windows.
 
-**Checking for updates:** `pelta-ctl firmware --check` and the settings window's **Check for updates** button read the latest version from the same file Gear Link uses (`https://gearlink.asus.com/firmware-update-tools/7044/windows/manifest.json`) and compare it with your headset and dongle. This is the only time the tools contact anything online, and only when you ask. It's an unofficial use of an ASUS file, so it may stop working if ASUS changes it.
+**Checking for updates:** `pelta-ctl firmware --check` and the settings window's **Check for updates** button read the latest version from the same file Gear Link uses (`https://gearlink.asus.com/firmware-update-tools/7044/windows/manifest.json`) and compare it with your headset and dongle. With only the dongle connected (the headset switched off or asleep), the check still runs: it reports and compares the dongle, and says the headset wasn't checked; turn the headset on and check again for it. Connected by USB-C, it reads the headset, and also the dongle when that is plugged in too; a part that isn't present is reported as not checked. This is the only time the tools contact anything online, and only when you ask. It's an unofficial use of an ASUS file, so it may stop working if ASUS changes it.
 
 ## Troubleshooting
 

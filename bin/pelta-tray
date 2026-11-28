@@ -225,8 +225,7 @@ class Window(QWidget):
         self.power_box.setTitle("Power")
         self.audio_box.setTitle("Audio")
 
-        fw_h, fw_d = info["firmware"]
-        self.firmware.setText(f"headset {fw_h or '?'}" + (f", dongle {fw_d}" if fw_d else ""))
+        self.set_firmware(*info["firmware"])
 
         light = info["lighting"]
         if light == "off":
@@ -272,7 +271,20 @@ class Window(QWidget):
         self.light_box.setTitle("Lighting (wake the headset to change)")
         self.power_box.setTitle("Power (wake the headset to change)")
         self.audio_box.setTitle("Audio (wake the headset to change)")
+        self.refresh_firmware()             # the dongle still reports its own version
         self.update_conn_box()
+
+    def set_firmware(self, fw_h, fw_d):
+        self.firmware.setText(f"headset {fw_h or '?'}" + (f", dongle {fw_d}" if fw_d else ""))
+
+    def refresh_firmware(self):
+        """Read the versions on their own, so the dongle shows while the headset is off."""
+        holder = {}
+        err = run(lambda: holder.update(v=ctl.read_firmware()))
+        if err:
+            self.firmware.setText("–")
+        else:
+            self.set_firmware(*holder["v"])
 
     def update_conn_box(self):
         ok = self.mode_name == "2.4GHz" and self.info is not None
@@ -311,6 +323,8 @@ class Window(QWidget):
             self.load_device()
         elif (s.get("awake") is False or not mode) and self.info is not None:
             self.set_asleep()
+        elif changed:
+            self.refresh_firmware()
         self.update_conn_box()
 
     # ---- firmware -----------------------------------------------------------
@@ -324,12 +338,21 @@ class Window(QWidget):
         if err:
             self.msg.setText(err)
             return
-        newer = [f"{part} {latest}" for part, _, latest, new in holder["v"] if new]
-        if newer:
-            self.msg.setText(f"Firmware update available ({', '.join(newer)}). "
-                             f"Install it from Windows with ASUS Gear Link: {ctl.GEARLINK}")
-        else:
-            self.msg.setText("Firmware is up to date.")
+        result = holder["v"]
+        lines = [f"{part.capitalize()} {have} (latest {latest}, "
+                 f"{'update available' if newer else 'up to date'})"
+                 for part, have, latest, newer in result]
+        parts = {part for part, *_ in result}
+        if "headset" not in parts:
+            lines.append("Headset not connected, not checked.")
+        if "dongle" not in parts:
+            lines.append("Dongle not checked." if os.path.exists(ctl.DONGLE)
+                         else "Dongle not connected, not checked.")
+        if any(newer for *_, newer in result):
+            lines.append(f"Install it from Windows with ASUS Gear Link: {ctl.GEARLINK}")
+        self.msg.setText("\n".join(lines))
+        have = {part: h for part, h, _, _ in result}
+        self.set_firmware(have.get("headset"), have.get("dongle"))
 
     # ---- lighting -----------------------------------------------------------
     def update_lighting_widgets(self):

@@ -73,7 +73,7 @@ def send(payload):
     send_to(device(), payload)
 
 
-def get(key, index=(0, 0), path=None, timeout=2):
+def get(key, index=(0, 0), path=None, timeout=2, allow_unreachable=False):
     """Send a get for `key`; return the 64-byte reply. Exits if asleep or no reply."""
     fd = os.open(path or device(), os.O_RDWR)
     try:
@@ -86,7 +86,7 @@ def get(key, index=(0, 0), path=None, timeout=2):
                 break
             r = os.read(fd, 256)
             if r[:5] == bytes([0xCC, GET, key, *index]):
-                if r[5:7] == b"\xff\xaa":
+                if r[5:7] == b"\xff\xaa" and not allow_unreachable:
                     sys.exit("pelta-ctl: headset is asleep or off; wake it and retry")
                 return r
     finally:
@@ -107,9 +107,23 @@ def _version(b):
 
 
 def read_firmware():
-    """Return (headset, dongle) firmware versions as strings, or None if not reported."""
-    r = get(0x00)
-    return _version(r[5:9]), _version(r[9:13])
+    """Return (headset, dongle) firmware versions as strings, or None if not reported.
+
+    Over USB-C the headset reports only its own version, so the dongle is
+    asked separately when it is plugged in too.
+    """
+    r = get(0x00, allow_unreachable=True)
+    fw_h = None if r[5:7] == b"\xff\xaa" else _version(r[5:9])
+    fw_d = _version(r[9:13])
+    path, _ = connection()
+    if fw_d is None and path and path != DONGLE and os.path.exists(DONGLE):
+        try:
+            r = get(0x00, path=DONGLE, allow_unreachable=True)
+        except (SystemExit, OSError):
+            pass
+        else:
+            fw_d = _version(r[9:13])
+    return fw_h, fw_d
 
 
 def _vtuple(v):
@@ -117,7 +131,7 @@ def _vtuple(v):
 
 
 def check_updates(timeout=8):
-    """Compare the headset's firmware with the latest from ASUS.
+    """Compare the headset and dongle firmware with the latest from ASUS.
 
     Returns [(part, installed, latest, update_available)]. Contacts
     gearlink.asus.com, so only call this when the user asks.
@@ -385,6 +399,12 @@ def main():
         result = check_updates()
         for part, have, latest, newer in result:
             print(f"{part:<8}{have}  (latest {latest}{', update available' if newer else ', up to date'})")
+        parts = {part for part, *_ in result}
+        if "headset" not in parts:
+            print("headset not connected, not checked")
+        if "dongle" not in parts:
+            print("dongle not checked" if os.path.exists(DONGLE)
+                  else "dongle not connected, not checked")
         if any(newer for *_, newer in result):
             print(f"\nUpdate from Windows with ASUS Gear Link: {GEARLINK}")
     elif a.cmd == "firmware":
